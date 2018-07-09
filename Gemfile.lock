@@ -1,0 +1,36 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    diplomat (2.0.2)
+      faraday (~> 0.9)
+      json
+    et-orbi (1.1.2)
+      tzinfo
+    faraday (0.15.2)
+      multipart-post (>= 1.2, < 3)
+    fugit (1.1.3)
+      et-orbi (~> 1.1, >= 1.1.1)
+      raabro (~> 1.1)
+    json (2.1.0)
+    multipart-post (2.0.0)
+    raabro (1.1.6)
+    rufus-scheduler (3.5.0)
+      fugit (~> 1.1, >= 1.1.1)
+    tcce (0.1.1)
+      diplomat (~> 2.0, >= 2.0.2)
+    thread_safe (0.3.6)
+    tzinfo (1.2.5)
+      thread_safe (~> 0.1)
+    tzinfo-data (1.2018.5)
+      tzinfo (>= 1.0.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  rufus-scheduler (~> 3.5)
+  tcce (~> 0.1, >= 0.1.1)
+  tzinfo-data (~> 1.2018, >= 1.2018.5)
+
+BUNDLED WITH
+   1.16.2

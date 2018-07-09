@@ -1,0 +1,20 @@
+version: '3.6'
+
+services:
+  tcce:
+    image: ralfherzog/tcce
+    build:
+      context: .
+    volumes:
+      - ./export:/export
+      - ./ca.crt:/usr/src/app/ca.crt:ro
+    environment:
+      - CRON_PATTERN=28 * * * *
+      - CONSUL_URL=http://localhost:8300
+      - CONSUL_ACL_TOKEN=xxxxxxxx-yyyy-zzzz-1111-222222222222
+      - CONSUL_KV_PATH=traefik/acme/account/object
+      - CA_FILE=/usr/src/app/ca.crt
+      - EXPORT_DIRECTORY=/export
+      - EXPORT_OVERWRITE=true
+      - LOG_LEVEL=INFO
+      - TZ=Europe/Berlin

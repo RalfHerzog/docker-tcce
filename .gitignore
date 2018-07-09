@@ -1,0 +1,5 @@
+.idea/
+export/*.crt
+export/*.key
+production.env
+ca.crt
