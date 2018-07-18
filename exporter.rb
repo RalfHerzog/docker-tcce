@@ -53,24 +53,24 @@ class Exporter
   end
 
   # Writes the public certificate content to file
-  # @param [TCCE::Certificate] tcce_cert
-  def write_certificate(tcce_cert)
-    cert_path = file_path tcce_cert.domain, 'crt'
-    @logger.debug "Attempt to write certificate to [#{cert_path}]"
+  # @param [TCCE::Certificate] cert
+  def write_certificate(cert)
+    path = file_path cert.domain, 'crt'
+    @logger.debug "Attempt to write certificate to [#{path}]"
 
-    if content_changed? cert_path, tcce_cert.certificate.to_s
-      write_file cert_path, tcce_cert.certificate.to_s if write_ready?(cert_path)
+    if content_changed? path, cert.certificate.to_s
+      write_file path, cert.certificate.to_s, 0o644 if write_ready? path
     end
   end
 
   # Writes the private key content to file
-  # @param [TCCE::Certificate] tcce_cert
-  def write_private_key(tcce_cert)
-    key_path = file_path tcce_cert.domain, 'key'
-    @logger.debug "Attempt to write private key to [#{key_path}]"
+  # @param [TCCE::Certificate] cert
+  def write_private_key(cert)
+    path = file_path cert.domain, 'key'
+    @logger.debug "Attempt to write private key to [#{path}]"
 
-    if content_changed? key_path, tcce_cert.private_key.to_s
-      write_file key_path, tcce_cert.private_key.to_s if write_ready? key_path
+    if content_changed? path, cert.private_key.to_s
+      write_file path, cert.private_key.to_s, 0o400 if write_ready? path
     end
   end
 
@@ -154,9 +154,18 @@ class Exporter
   # Writes content to file_path
   # @param [String] file_path
   # @param [String] content
-  def write_file(file_path, content)
+  def write_file(file_path, content, chmod_mode)
+    @logger.debug "Create empty file at [#{file_path}]"
+    ::File.write file_path, ''
+    ::File.chmod 0o600, file_path
+    @logger.info "Created empty file at [#{file_path}]"
+
     @logger.debug "Attempt to write [#{content.length}] bytes to [#{file_path}]"
     ::File.write file_path, content
     @logger.info "Wrote [#{content.length}] bytes to [#{file_path}]"
+
+    @logger.debug "Attempt to set permission [#{chmod_mode}] to [#{file_path}]"
+    ::File.chmod chmod_mode, file_path
+    @logger.info "Set permission [#{chmod_mode}] to [#{file_path}]"
   end
 end
