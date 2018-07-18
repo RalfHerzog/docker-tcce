@@ -30,7 +30,7 @@ Run the export of certificates each day at 03:28 AM. Cron patterns are accepted.
 
     FIRST_IN: 10s
 
-In development you likely do not want to want a day for a export. Define a time period to wait for a single execution. For more detail have a look at [jmettraux/rufus-scheduler](https://github.com/jmettraux/rufus-scheduler)
+In development you likely do not want to wait a day for a export. Define a time period to wait for a single execution. For more detail have a look at [jmettraux/rufus-scheduler](https://github.com/jmettraux/rufus-scheduler)
 
     CONSUL_URL: http://dc1.consul:8300
 
