@@ -25,11 +25,12 @@ logger.info "Wait to run by cron pattern [#{cron}]"
 logger.info "but run a single time in [#{first_in}]" if first_in
 STDOUT.flush
 
-# Make use of Rufus::Scheduler the schedule the certificate export
+# Make use of Rufus::Scheduler to schedule the certificate export
 scheduler = Rufus::Scheduler.new
 scheduler.cron cron, first_in: first_in do
   exporter = Exporter.new consul_url, consul_acl_token, consul_kv_path,
                           export_directory, ca_file, export_overwrite
   exporter.export
+  logger.info "Wait for next run at cron pattern [#{cron}]"
 end
 scheduler.join
