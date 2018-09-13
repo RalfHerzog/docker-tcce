@@ -1,55 +1,104 @@
 require 'digest'
+require 'open-uri'
+require 'openssl'
 require 'tcce'
+
+require_relative 'exporter_parameters'
 
 # The Exporter handles the workflow to query and export certificates from consul
 class Exporter
-  attr_accessor :consul, :path, :overwrite
+  # See: https://letsencrypt.org/certificates/
+  LE_INTERMEDIATE_URL = 'https://letsencrypt.org/certs/letsencryptauthorityx3.pem.txt'.freeze
 
   # Constructor
-  # @param [String] url consul API url
-  # @param [String] acl_token consul API acl_token
-  # @param [String] kv_path consul key-value storage path to acme object
-  # @param [String] path The path to write certificates to
-  # @param [Boolean] overwrite Overwrite existing certificates?
-  def initialize(url, acl_token, kv_path, path, ca_file = nil, overwrite = false)
-    @logger = Logger.new STDOUT
-    @logger.level = ENV.fetch('LOG_LEVEL') { 'DEBUG' }
-
-    self.consul = TCCE::Consul.new url, acl_token, kv_path, ca_file
-    self.path = path
-    self.overwrite = overwrite
-
-    unless Dir.exist? path
-      raise StandardError, "Export directory [#{path}] does not exist"
+  # @param [ExporterParameters] params
+  # @return [Exporter] the brand new Exporter object
+  def initialize(params)
+    unless params.is_a? ExporterParameters
+      raise StandardError, 'Must pass an [ExporterParameters] object as params'
     end
+    @logger = Logger.new STDOUT
+    @logger.level = params.log_level
+
+    @consul = TCCE::Consul.new params.url, params.acl_token,
+                               params.kv_path, params.ca_file
+    @path = params.path
+    @overwrite = params.overwrite
+    @bundle = params.bundle
   end
 
   # Exports the consul object and writes certificates to path
   def export
-    @logger.info 'Begin export procedure. Showtime'
-    @logger.info 'Get consul kv object'
-    kv_content = consul.get
-    @logger.debug "Received [#{kv_content.length}] bytes"
+    unless Dir.exist? @path
+      raise StandardError, "Export directory [#{@path}] does not exist"
+    end
 
+    @logger.info 'Begin export procedure. Showtime'
+
+    intermediate_cert = fetch_le_intermediate_cert
+    kv_content = consul_content
+    parse_and_export kv_content, intermediate_cert
+
+    @logger.info 'Finished export procedure'
+  end
+
+  def parse_and_export(kv_content, intermediate_cert)
     @logger.debug 'Parse the received object'
     tcce_file = TCCE::File.parse kv_content
-
     tcce_file.certificates do |certificate|
       @logger.info "Export [#{certificate.domain}]"
-      write_files certificate
+      write_files certificate, intermediate_cert
     end
-    @logger.info 'Finished export procedure'
   end
 
   private
 
+  # Downloads the current LE intermediate certificate
+  # @return [OpenSSL::Certificate]
+  def fetch_le_intermediate_cert
+    return nil unless @bundle
+
+    # Fetch intermediate certificate from LetsEncrypt
+    OpenSSL::X509::Certificate.new URI.parse(LE_INTERMEDIATE_URL).read
+  end
+
+  # Fetches consul kv content
+  # @return [String]
+  def consul_content
+    @logger.info 'Get consul kv object'
+    kv_content = @consul.get
+    @logger.debug "Received [#{kv_content.length}] bytes"
+    kv_content
+  end
+
   # Writes public/private key pair and SAN symlinks
   # @param [TCCE::Certificate] certificate
-  def write_files(certificate)
+  # @param [OpenSSL::X509::Certificate] intermediate_cert
+  def write_files(certificate, intermediate_cert)
     write_certificate certificate
+    write_certificate_bundle certificate, intermediate_cert if intermediate_cert
+
     create_symlinks certificate
 
     write_private_key certificate
+  end
+
+  # Writes certificate plus intermediate certificate to a 'bundle' file
+  # @param [TCCE::Certificate] cert
+  # @param [OpenSSL::X509::Certificate] intermediate_cert
+  def write_certificate_bundle(cert, intermediate_cert)
+    unless cert.certificate.verify intermediate_cert.public_key
+      raise StandardError, "Certificate issuer does not match intermediate cert
+ serial [#{cert.certificate.serial} != #{intermediate_cert.serial}]"
+    end
+
+    path = file_path cert.domain, 'bundle.crt'
+    @logger.debug "Attempt to write bundle certificate to [#{path}]"
+
+    content = cert.certificate.to_s + "\n" + intermediate_cert.to_s
+    if content_changed? path, content
+      write_file path, content, 0o644 if write_ready? path
+    end
   end
 
   # Writes the public certificate content to file
@@ -80,22 +129,33 @@ class Exporter
     @logger.debug 'Write SAN symlinks'
     (certificate.sans || []).each do |san|
       if certificate.domain == san
-        @logger.debug 'Skip because san equals domain name'
+        @logger.debug 'Skip because SAN equals domain name'
         next
       end
 
-      create_symlink certificate, san
+      create_certificate_symlink certificate, san
     end
   end
 
   # Create a symlink for Subject-Alternative-Name (SAN)
   # @param [TCCE::Certificate] certificate
   # @param [String] san ex. san.example.org
-  def create_symlink(certificate, san)
+  def create_certificate_symlink(certificate, san)
     # Relative link without subdirectory and real path
     san_link = certificate.domain + '.crt'
     san_path = file_path san, 'crt'
 
+    create_symlink san_path, san_link
+
+    # Create bundle link?
+    return unless @bundle
+    san_link = certificate.domain + '.bundle.crt'
+    san_path = file_path san, 'bundle.crt'
+
+    create_symlink san_path, san_link
+  end
+
+  def create_symlink(san_path, san_link)
     if File.symlink?(san_path) && File.readlink(san_path) == san_link
       @logger.info 'Skip because symlink (target) did not change'
       return
@@ -110,7 +170,7 @@ class Exporter
   # @param [String] suffix
   # @return [String] file path
   def file_path(filename, suffix)
-    file_path = ::File.join path, filename + '.' + suffix
+    file_path = ::File.join @path, filename + '.' + suffix
     @logger.debug "File export path is [#{file_path}]"
     file_path
   end
@@ -140,7 +200,7 @@ class Exporter
   def write_ready?(file_path)
     if File.exist?(file_path) || File.symlink?(file_path)
       @logger.debug "File [#{file_path}] exists already"
-      unless overwrite
+      unless @overwrite
         @logger.warn 'Overwrite NOT allowed. File is not NOT write ready'
         return false
       end

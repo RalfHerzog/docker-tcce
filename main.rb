@@ -11,6 +11,7 @@ consul_kv_path = ENV.fetch 'CONSUL_KV_PATH'
 cron = ENV.fetch('CRON_PATTERN') { '5 0 * * *' }
 export_directory = ENV.fetch 'EXPORT_DIRECTORY'
 export_overwrite = ENV['EXPORT_OVERWRITE'] == 'false' ? false : true
+bundle = ENV['BUNDLE_CERTIFICATES'] == 'false' ? false : true
 log_level = ENV.fetch('LOG_LEVEL') { 'DEBUG' }
 first_in = ENV.fetch('FIRST_IN') { nil }
 
@@ -28,9 +29,16 @@ STDOUT.flush
 # Make use of Rufus::Scheduler to schedule the certificate export
 scheduler = Rufus::Scheduler.new
 scheduler.cron cron, first_in: first_in do
-  exporter = Exporter.new consul_url, consul_acl_token, consul_kv_path,
-                          export_directory, ca_file, export_overwrite
-  exporter.export
+  parameters = ExporterParameters.new url: consul_url,
+                                      acl_token: consul_acl_token,
+                                      kv_path: consul_kv_path,
+                                      path: export_directory,
+                                      ca_file: ca_file,
+                                      overwrite: export_overwrite,
+                                      bundle: bundle,
+                                      log_level: log_level
+
+  Exporter.new(parameters).export
   logger.info "Wait for next run at cron pattern [#{cron}]"
 end
 scheduler.join

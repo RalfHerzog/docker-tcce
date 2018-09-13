@@ -4,8 +4,8 @@ services:
   tcce:
     image: ralfherzog/tcce
     volumes:
-      - ./export:/export
-      - ./ca.crt:/usr/src/app/ca.crt:ro
+    - ./export:/export
+    - ./ca.crt:/usr/src/app/ca.crt:ro
     environment:
       CRON_PATTERN: '28 3 * * *'
       FIRST_IN: '10s'
@@ -15,5 +15,6 @@ services:
       CA_FILE: '/usr/src/app/ca.crt'
       EXPORT_DIRECTORY: '/export'
       EXPORT_OVERWRITE: 'true'
+      BUNDLE_CERTIFICATES: 'true'
       LOG_LEVEL: 'INFO'
       TZ: 'Europe/Berlin'

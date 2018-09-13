@@ -1,5 +1,4 @@
 .idea/
-export/*.crt
-export/*.key
+export/*
 .env
 ca.crt

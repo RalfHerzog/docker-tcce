@@ -56,6 +56,10 @@ Define a directory to export the certificates to. The directory should be mounte
 
 If traefik renews a certificate, you may want to overwrite the old one. `true` is the default
 
+    BUNDLE_CERTIFICATES: true
+
+Usually you need certificate files with the intermediate certificate included. If not, you can set the generation to `false`
+
     LOG_LEVEL: INFO
 
 Control the log level to the container-console

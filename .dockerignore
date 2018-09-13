@@ -1,2 +1,4 @@
 export/
 ca.crt
+docker-compose.yml
+Dockerfile
