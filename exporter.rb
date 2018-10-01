@@ -36,12 +36,38 @@ class Exporter
     @logger.info 'Begin export procedure. Showtime'
 
     intermediate_cert = fetch_le_intermediate_cert
+    export_le_intermediate_cert intermediate_cert
     kv_content = consul_content
     parse_and_export kv_content, intermediate_cert
 
     @logger.info 'Finished export procedure'
   end
 
+  private
+
+  # Exports the intermediate certificate
+  # @param [OpenSSL::X509::Certificate] intermediate_cert
+  def export_le_intermediate_cert(intermediate_cert)
+    @logger.debug 'Export intermediate certificate'
+
+    # FIXME: Just an idea to save the original intermediate CA certificate
+    # in it's own file. A symlink on that will not be mounted (docker)
+    # See: https://stackoverflow.com/a/31885214
+    #
+    # cn = intermediate_cert.subject.to_a.find { |ary| ary[0] == 'CN' }[1]
+    # path = file_path cn, 'crt'
+    # write_file path, intermediate_cert.to_s, 0o644
+
+    path = file_path 'intermediate', 'crt'
+    safe_write_file path, intermediate_cert.to_s, 0o644
+
+    @logger.debug 'Exported intermediate certificate'
+  end
+
+  # Starts parsing key-value store and exports certificates with optional
+  # intermediate certificate
+  # @param [String] kv_content
+  # @param [OpenSSL::X509::Certificate] intermediate_cert
   def parse_and_export(kv_content, intermediate_cert)
     @logger.debug 'Parse the received object'
     tcce_file = TCCE::File.parse kv_content
@@ -50,8 +76,6 @@ class Exporter
       write_files certificate, intermediate_cert
     end
   end
-
-  private
 
   # Downloads the current LE intermediate certificate
   # @return [OpenSSL::Certificate]
@@ -71,45 +95,82 @@ class Exporter
     kv_content
   end
 
-  # Writes public/private key pair and SAN symlinks
+  # Writes public/private key pair and SAN certificates
   # @param [TCCE::Certificate] certificate
   # @param [OpenSSL::X509::Certificate] intermediate_cert
   def write_files(certificate, intermediate_cert)
+    # Single server certificates
     write_certificate certificate
-    write_certificate_bundle certificate, intermediate_cert if intermediate_cert
+    write_san_files certificate
 
-    create_symlinks certificate
+    # Server bundle certificates
+    if intermediate_cert
+      write_certificate_bundle certificate, intermediate_cert
+      write_san_bundles certificate, intermediate_cert
+    end
 
     write_private_key certificate
+  end
+
+  # Writes SAN bundle certificates
+  # @param [TCCE::Certificate] certificate
+  # @param [OpenSSL::X509::Certificate] intermediate_cert
+  def write_san_bundles(certificate, intermediate_cert)
+    @logger.debug 'Write SAN bundle certicates'
+    (certificate.sans || []).each do |san|
+      if certificate.domain == san
+        @logger.debug 'Skip because SAN equals domain name'
+        next
+      end
+
+      write_certificate_bundle certificate, intermediate_cert, san
+    end
   end
 
   # Writes certificate plus intermediate certificate to a 'bundle' file
   # @param [TCCE::Certificate] cert
   # @param [OpenSSL::X509::Certificate] intermediate_cert
-  def write_certificate_bundle(cert, intermediate_cert)
+  # @param [String] alternative_domain
+  def write_certificate_bundle(cert, intermediate_cert, alternative_domain = nil)
     unless cert.certificate.verify intermediate_cert.public_key
       raise StandardError, "Certificate issuer does not match intermediate cert
  serial [#{cert.certificate.serial} != #{intermediate_cert.serial}]"
     end
 
-    path = file_path cert.domain, 'bundle.crt'
+    path = file_path (alternative_domain || cert.domain), 'bundle.crt'
     @logger.debug "Attempt to write bundle certificate to [#{path}]"
 
+    # Concatenate the server and intermediate certificate
     content = cert.certificate.to_s + "\n" + intermediate_cert.to_s
-    if content_changed? path, content
-      write_file path, content, 0o644 if write_ready? path
-    end
+    safe_write_file path, content, 0o644
   end
 
   # Writes the public certificate content to file
   # @param [TCCE::Certificate] cert
-  def write_certificate(cert)
-    path = file_path cert.domain, 'crt'
+  # @param [String] alternative_domain
+  def write_certificate(cert, alternative_domain = nil)
+    path = file_path (alternative_domain || cert.domain), 'crt'
     @logger.debug "Attempt to write certificate to [#{path}]"
+    safe_write_file path, cert.certificate.to_s, 0o644
+  end
 
-    if content_changed? path, cert.certificate.to_s
-      write_file path, cert.certificate.to_s, 0o644 if write_ready? path
+  # Writes a file only if it's changed and able to write
+  # @param [String] path
+  # @param [String] content
+  # @param [Fixnum] chmod_mode
+  def safe_write_file(path, content, chmod_mode)
+    if content_changed?(path, content) || chmod_changed?(path, chmod_mode)
+      write_file path, content, chmod_mode if write_ready? path
     end
+  end
+
+  # Return true if file mode for file_path has changed
+  # @param [String] file_path
+  # @param [Fixnum] chmod_mode
+  def chmod_changed?(file_path, chmod_mode)
+    return true unless File.exist? file_path
+    mode = File.stat(file_path).mode
+    !(mode.to_s(8).end_with? chmod_mode.to_s(8))
   end
 
   # Writes the private key content to file
@@ -118,51 +179,21 @@ class Exporter
     path = file_path cert.domain, 'key'
     @logger.debug "Attempt to write private key to [#{path}]"
 
-    if content_changed? path, cert.private_key.to_s
-      write_file path, cert.private_key.to_s, 0o400 if write_ready? path
-    end
+    safe_write_file path, cert.private_key.to_s, 0o400
   end
 
-  # Creates symlinks for Subject-Alternative-Names (SAN)
+  # Creates certificate files for each Subject-Alternative-Name (SAN)
   # @param [TCCE::Certificate] certificate
-  def create_symlinks(certificate)
-    @logger.debug 'Write SAN symlinks'
+  def write_san_files(certificate)
+    @logger.debug 'Write SAN certificates'
     (certificate.sans || []).each do |san|
       if certificate.domain == san
         @logger.debug 'Skip because SAN equals domain name'
         next
       end
 
-      create_certificate_symlink certificate, san
+      write_certificate certificate, san
     end
-  end
-
-  # Create a symlink for Subject-Alternative-Name (SAN)
-  # @param [TCCE::Certificate] certificate
-  # @param [String] san ex. san.example.org
-  def create_certificate_symlink(certificate, san)
-    # Relative link without subdirectory and real path
-    san_link = certificate.domain + '.crt'
-    san_path = file_path san, 'crt'
-
-    create_symlink san_path, san_link
-
-    # Create bundle link?
-    return unless @bundle
-    san_link = certificate.domain + '.bundle.crt'
-    san_path = file_path san, 'bundle.crt'
-
-    create_symlink san_path, san_link
-  end
-
-  def create_symlink(san_path, san_link)
-    if File.symlink?(san_path) && File.readlink(san_path) == san_link
-      @logger.info 'Skip because symlink (target) did not change'
-      return
-    end
-    return unless write_ready? san_path
-    @logger.info "Write [#{san_path}] symlink with link to [#{san_link}]"
-    File.symlink san_link, san_path
   end
 
   # Generates a file path for a file to be exported
@@ -198,13 +229,15 @@ class Exporter
   # @param [String] file_path
   # @return [Boolean] true if file_path is ready to write to
   def write_ready?(file_path)
-    if File.exist?(file_path) || File.symlink?(file_path)
+    if File.exist?(file_path)
       @logger.debug "File [#{file_path}] exists already"
       unless @overwrite
         @logger.warn 'Overwrite NOT allowed. File is not NOT write ready'
         return false
       end
       @logger.info "Delete file [#{file_path}]"
+
+      # TODO: This method should not have any side-effects
       File.delete file_path
     end
     @logger.debug "Path [#{file_path}] is write ready"
@@ -217,6 +250,9 @@ class Exporter
   def write_file(file_path, content, chmod_mode)
     @logger.debug "Create empty file at [#{file_path}]"
     ::File.write file_path, ''
+    @logger.debug "Created empty file at [#{file_path}]"
+
+    @logger.debug "Attempt to set permission [#{0o600.to_s(8)}] to [#{file_path}]"
     ::File.chmod 0o600, file_path
     @logger.info "Created empty file at [#{file_path}]"
 
@@ -224,8 +260,8 @@ class Exporter
     ::File.write file_path, content
     @logger.info "Wrote [#{content.length}] bytes to [#{file_path}]"
 
-    @logger.debug "Attempt to set permission [#{chmod_mode}] to [#{file_path}]"
+    @logger.debug "Attempt to set permission [#{chmod_mode.to_s(8)}] to [#{file_path}]"
     ::File.chmod chmod_mode, file_path
-    @logger.info "Set permission [#{chmod_mode}] to [#{file_path}]"
+    @logger.info "Set permission [#{chmod_mode.to_s(8)}] to [#{file_path}]"
   end
 end
