@@ -8,7 +8,7 @@ require_relative 'exporter_parameters'
 # The Exporter handles the workflow to query and export certificates from consul
 class Exporter
   # See: https://letsencrypt.org/certificates/
-  LE_INTERMEDIATE_URL = 'https://letsencrypt.org/certs/letsencryptauthorityx3.pem.txt'.freeze
+  LE_INTERMEDIATE_URL = 'https://letsencrypt.org/certs/lets-encrypt-r3.pem'.freeze
 
   # Constructor
   # @param [ExporterParameters] params
