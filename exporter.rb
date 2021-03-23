@@ -14,10 +14,9 @@ class Exporter
   # @param [ExporterParameters] params
   # @return [Exporter] the brand new Exporter object
   def initialize(params)
-    unless params.is_a? ExporterParameters
-      raise StandardError, 'Must pass an [ExporterParameters] object as params'
-    end
-    @logger = Logger.new STDOUT
+    raise StandardError, 'Must pass an [ExporterParameters] object as params' unless params.is_a? ExporterParameters
+
+    @logger = Logger.new $stdout
     @logger.level = params.log_level
 
     @consul = TCCE::Consul.new params.url, params.acl_token,
@@ -29,9 +28,7 @@ class Exporter
 
   # Exports the consul object and writes certificates to path
   def export
-    unless Dir.exist? @path
-      raise StandardError, "Export directory [#{@path}] does not exist"
-    end
+    raise StandardError, "Export directory [#{@path}] does not exist" unless Dir.exist? @path
 
     @logger.info 'Begin export procedure. Showtime'
 
@@ -141,7 +138,7 @@ class Exporter
     @logger.debug "Attempt to write bundle certificate to [#{path}]"
 
     # Concatenate the server and intermediate certificate
-    content = cert.certificate.to_s + "\n" + intermediate_cert.to_s
+    content = "#{cert.certificate}\n#{intermediate_cert}"
     safe_write_file path, content, 0o644
   end
 
@@ -159,8 +156,8 @@ class Exporter
   # @param [String] content
   # @param [Fixnum] chmod_mode
   def safe_write_file(path, content, chmod_mode)
-    if content_changed?(path, content) || chmod_changed?(path, chmod_mode)
-      write_file path, content, chmod_mode if write_ready? path
+    if (content_changed?(path, content) || chmod_changed?(path, chmod_mode)) && (write_ready? path)
+      write_file path, content, chmod_mode
     end
   end
 
@@ -169,6 +166,7 @@ class Exporter
   # @param [Fixnum] chmod_mode
   def chmod_changed?(file_path, chmod_mode)
     return true unless File.exist? file_path
+
     mode = File.stat(file_path).mode
     !(mode.to_s(8).end_with? chmod_mode.to_s(8))
   end
@@ -201,7 +199,7 @@ class Exporter
   # @param [String] suffix
   # @return [String] file path
   def file_path(filename, suffix)
-    file_path = ::File.join @path, filename + '.' + suffix
+    file_path = ::File.join @path, "#{filename}.#{suffix}"
     @logger.debug "File export path is [#{file_path}]"
     file_path
   end

@@ -3,6 +3,8 @@ version: '3.6'
 services:
   tcce:
     image: ralfherzog/tcce
+    build:
+      context: .
     volumes:
     - ./export:/export
     - ./ca.crt:/usr/src/app/ca.crt:ro
